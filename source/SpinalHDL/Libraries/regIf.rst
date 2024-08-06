@@ -28,10 +28,10 @@ Automatic address allocation
     val M_REGn1 = busif.newReg(doc="REGn1")
 
     busif.accept(HtmlGenerator("regif", "AP"))
-    // busif.accept(CHeaderGenerator("header", "AP"))
-    // busif.accept(JsonGenerator("regif"))
-    // busif.accept(RalfGenerator("regbank"))
-    // busif.accept(SystemRdlGenerator("regif", "AP"))
+    // busif.accept(DocCHeader("header", "AP"))
+    // busif.accept(DocJson("regif"))
+    // busif.accept(DocRalf("regbank"))
+    // busif.accept(DocSystemRdl("regif"))
   }
 
 .. image:: /asset/image/regif/reg-auto-allocate.gif
@@ -104,6 +104,8 @@ W1P         w: 1/0 pulse/no effect on matching bit, r: no effect                
 W0P         w: 0/1 pulse/no effect on matching bit, r: no effect                            New
 HSRW        w: Hardware Set, SoftWare RW                                                    New
 RWHS        w: SoftWare RW, Hardware Set                                                    New
+W1CHS       W: SW write 1 Clear, SW high priority than HW, r: no effect                     New
+W1SHS       W: SW write 1 Set, SW high priority than HW, r: no effect                       New
 ROV         w: ReadOnly Value, used for hardware version                                    New
 CSTM        w: user custom Type, used for document                                          New
 ==========  =============================================================================   ====
@@ -113,14 +115,29 @@ Automatic documentation generation
 
 Document Type
 
+.. warning::
+
+      old api , depcreated 2024.12.30
+
+      ==========  =========================================================================================   ======
+      Document    Usage                                                                                       Status
+      ==========  =========================================================================================   ======
+      HTML        ``busif.accept(HtmlGenerator("regif", title = "XXX register file"))``                         Y
+      CHeader     ``busif.accept(CHeaderGenerator("header", "AP"))``                                            Y
+      JSON        ``busif.accept(JsonGenerator("regif"))``                                                      Y
+      RALF(UVM)   ``busif.accept(RalfGenerator("header"))``                                                     Y
+      SystemRDL   ``busif.accept(SystemRdlGenerator("regif", "addrmap_name", Some("name"), Some("desc")))``     Y
+      ==========  =========================================================================================   ======
+
 ==========  =========================================================================================   ======
 Document    Usage                                                                                       Status
 ==========  =========================================================================================   ======
-HTML        ``busif.accept(HtmlGenerator("regif", title = "XXX register file"))``                         Y
-CHeader     ``busif.accept(CHeaderGenerator("header", "AP"))``                                            Y
-JSON        ``busif.accept(JsonGenerator("regif"))``                                                      Y
-RALF(UVM)   ``busif.accept(RalfGenerator("header"))``                                                     Y
-SystemRDL   ``busif.accept(SystemRdlGenerator("regif", "addrmap_name", Some("name"), Some("desc")))``     Y
+HTML        ``busif.accept(DocHtml("regif"))``                                                            Y
+CHeader     ``busif.accept(DocCHeader("sys0", "AP"))``                                                    Y
+SVHeader    ``busif.accept(DocCHeader("sys0", "AP"))``                                                    Y
+JSON        ``busif.accept(DocJson("sys0"))``                                                             Y
+RALF(UVM)   ``busif.accept(DocRalf("sys0"))``                                                             Y
+SystemRDL   ``busif.accept(DocSystemRdl("sys0")``                                                         Y
 Latex(pdf)                                                                                                N
 docx                                                                                                      N
 ==========  =========================================================================================   ======
@@ -317,11 +334,11 @@ Batch create REG-Address and fields register
     }
 
     def genDocs() = {
-      busif.accept(CHeaderGenerator("regbank", "AP"))
-      busif.accept(HtmlGenerator("regbank", "Interupt Example"))
-      busif.accept(JsonGenerator("regbank"))
-      busif.accept(RalfGenerator("regbank"))
-      busif.accept(SystemRdlGenerator("regbank", "AP"))
+      busif.accept(DocCHeader("regbank", "AP"))
+      busif.accept(DocHtml("regbank"))
+      busif.accept(DockJson("regbank"))
+      busif.accept(DocRalf("regbank"))
+      busif.accept(DocSystemRdl("regbank"))
     }
 
     this.genDocs()
@@ -334,6 +351,9 @@ Interrupt Factory
 =================
 
 Manual writing interruption
+
+Tranditional way
+--------------------------
 
 .. code:: scala   
 
@@ -403,6 +423,169 @@ Easy Way create interruption:
 
 .. image:: /asset/image/regif/easy-intr.png
 
+case1: RFMS4
+--------------------------
+
+RFMS4(RAW/FORCE/MASK/STATUS) 4 Interrupt Register Group for 1st interrupt signal generate
+
+========== ==========  ======================================================================
+Register   AccessType  Description                                                           
+========== ==========  ======================================================================
+RAW        W1C         int raw register, set by int event, clear when bus write 1  
+FORCE      RW          int force register, for SW debug use 
+MASK       RW          int mask register, 1: off; 0: open; defualt 1 int off 
+STATUS     RO          int status, Read Only, ``status = raw && ! mask``                 
+========== ==========  ======================================================================
+ 
+.. image:: /asset/image/intc/RFMS.svg
+
+.. code:: verilog   
+
+   always @(posedge clk or negedge rstn)
+     if(!rstn) begin
+         raw_status_x <= 1'b0 ;
+     end else if(signal_x) begin
+         raw_status_x <= 1'b1;
+     end else if(bus_addr == `xxx_RAW && bus_wdata[n]) begin //W1C
+         raw_status_x <= 1'b0 ;
+     end else if(bus_addr == `xxx_RAW && bus_wdata[n]) begin  //W1S
+         raw_status_x <= 1'b1 ;
+     end
+  
+   always@(posedge clk or negedge rstn)
+     if(!rstn) begin
+         mask <= 32'b0 ;
+     end else if(bus_addr == `xxx_MASK) begin //RW
+         mask <= bus_wdata ;
+     end
+  
+   assign status_x = raw_status_x && !mask[x] ;
+  
+   always @(*) begin
+     case(addr) begin
+        `xxx_RAW:    bus_rdata = {28'b0, raw_status_3....raw_status_0};
+        `xxx_FORCE:  bus_rdata = {28'b0, raw_status_3....raw_status_0};
+        `xxx_MASK :  bus_rdata = mask;
+        `xxx_STATUS: bus_rdata = {28'b0, status_3....status_0};
+        ....
+     endcase
+    end
+  
+   assign  xxx_int = status_3 || status_2 || status_1 || status_0 ;
+
+Spinal code 
+
+.. code:: scala   
+
+   val SYS0INTR = busif.newIntrRFMS4(doc = doc = "Interrupt")
+   SYS0INTR.field(signal = io.a, maskRstVal = 1, doc = "event a")
+   SYS0INTR.field(signal = io.b, maskRstVal = 0, doc = "event b")
+   SYS0INTR.fieldAt(pos = 16, signal = io.c, maskRstVal = 0,doc =  "event c")
+   SYS0INTR.field(signal = io.d, maskRstVal = 1, doc = "event d")
+   SYS0INTR.field(signal = io.e, maskRstVal = 1, doc = "event e")
+   val intr = SYS0INTR.intr()
+
+
+we can also use factory to create multiple interrupt signals for simple, difference to below which can 
+specifying maskRstVal and doc
+
+.. code:: scala   
+
+    busif.interruptFactory("T", io.a, io.b, io.c, io.d, io.e)
+
+case2: RFMMS5
+--------------------------
+
+RFMMS5(RAW/FORCE/MASKS/MASKC/STATUS) 5 Interrupt Register Group for 1st interrupt signal generate
+
+========== ==========  ======================================================================
+Register   AccessType  Description                                                           
+========== ==========  ======================================================================
+RAW        W1C         int raw register, set by int event, clear when bus write 1  
+FORCE      RW          int force register, for SW debug use 
+MASKS      W1S         int mask register, 1: off; 0: open; defualt 1 int off 
+MASKC      W1C         int mask register, 1: off; 0: open; defualt 1 int off 
+STATUS     RO          int status, Read Only, ``status = raw && ! mask``                 
+========== ==========  ======================================================================
+ 
+.. code:: verilog
+
+   always @(posedge clk or negedge rstn)
+     if(!rstn) begin
+         raw_status_x <= 1'b0 ;
+     end else if(signal_x) begin
+         raw_status_x <= 1'b1;
+     end else if(bus_addr == `xxx_RAW && bus_wdata[n]) begin //W1C
+         raw_status_x <= 1'b0 ;
+     end else if(bus_addr == `xxx_RAW && bus_wdata[n]) begin  //W1S
+         raw_status_x <= 1'b1 ;
+     end
+   
+   always@(posedge clk or negedge rstn)
+     if(!rstn) begin
+         mask_x <= 1'b0 ;
+     end else if(bus_addr == `xxx_MASKS && bus_wdata[n]) begin //W1S
+         mask_x <= 1'b1 ;
+     end else if(bus_addr == `xxx_MASKC && bus_wdata[n]) begin //W1C
+         mask_x <= 1'b0 ;
+     end
+   
+   assign status_x = raw_status_x && !mask_x ;
+   
+   always @(*) begin
+        case(addr) begin
+            `xxx_RAW:    bus_rdata = {28'b0, raw_status_3....raw_status_0};
+            `xxx_FORCE:  bus_rdata = {28'b0, raw_status_3....raw_status_0};
+            `xxx_MASKS:  bus_rdata = {28'b0, mask_3....mask_0};
+            `xxx_MASKC:  bus_rdata = {28'b0, mask_3....mask_0};
+            `xxx_STATUS: bus_rdata = {28'b0, status_3....status_0};
+            ....
+        endcase
+   end
+   
+   assign  xxx_int = status_3 || status_2 || status_1 || status_0 ;
+
+.. code:: scala   
+
+   val SYS0INTR = busif.newIntrRFMS4(doc = doc = "Interrupt")
+   SYS0INTR.field(signal = io.a, maskRstVal = 1, doc = "event a")
+   SYS0INTR.field(signal = io.b, maskRstVal = 0, doc = "event b")
+   SYS0INTR.fieldAt(pos = 16, signal = io.c, maskRstVal = 0,doc =  "event c")
+   SYS0INTR.field(signal = io.d, maskRstVal = 1, doc = "event d")
+   SYS0INTR.field(signal = io.e, maskRstVal = 1, doc = "event e")
+   val intr = SYS0INTR.intr()
+
+
+we can also use factory to create multiple interrupt signals for simple, difference to below which can 
+specifying maskRstVal and doc
+
+
+case3: MS2
+--------------------------
+
+========== ==========  ======================================================================
+Register   AccessType  Description                                                           
+========== ==========  ======================================================================
+MASK       RW          int mask register, 1: off; 0: open; defualt 1 int off 
+STATUS     RO          int status, RO, ``status = int_level && ! mask``                 
+========== ==========  ======================================================================
+
+.. image:: /asset/image/intc/MS.svg
+
+
+case4: MMS3
+--------------------------
+
+case5: OMS3
+--------------------------
+
+case6: OMMS4
+--------------------------
+
+case7: S1
+--------------------------
+
+
 IP level interrupt Factory
 --------------------------
 
@@ -416,8 +599,6 @@ STATUS     RO          int status, Read Only, ``status = raw && ! mask``
 ========== ==========  ======================================================================
  
 
-.. image:: /asset/image/intc/RFMS.svg
-
 SpinalUsage:
 
 .. code:: scala 
@@ -426,16 +607,6 @@ SpinalUsage:
 
 SYS level interrupt merge
 -------------------------
-
-========== ==========  ======================================================================
-Register   AccessType  Description                                                           
-========== ==========  ======================================================================
-MASK       RW          int mask register, 1: off; 0: open; defualt 1 int off 
-STATUS     RO          int status, RO, ``status = int_level && ! mask``                 
-========== ==========  ======================================================================
-
-.. image:: /asset/image/intc/MS.svg
-
 SpinalUsage:
 
 .. code:: scala 
@@ -445,19 +616,36 @@ SpinalUsage:
 Spinal Factory
 --------------
                                                                                                                                                  
+.. warning::
+
+   old way will be deprecated 2024.12.30
+
+   ============================================================================================= ===================================================================
+   BusInterface method                                                                           Description                                                        
+   ============================================================================================= ===================================================================
+   ``InterruptFactory(regNamePre: String, triggers: Bool*)``                                     create RAW/FORCE/MASK/STATUS for pulse event      
+   ``InterruptFactoryNoForce(regNamePre: String, triggers: Bool*)``                              create RAW/MASK/STATUS for pulse event      
+   ``InterruptLevelFactory(regNamePre: String, triggers: Bool*)``                                create MASK/STATUS for level_int merge       
+   ``InterruptFactoryAt(addrOffset: Int, regNamePre: String, triggers: Bool*)``                  create RAW/FORCE/MASK/STATUS for pulse event at addrOffset 
+   ``InterruptFactoryNoForceAt(addrOffset: Int, regNamePre: String, triggers: Bool*)``           create RAW/MASK/STATUS for pulse event at addrOffset     
+   ``InterruptFactoryAt(addrOffset: Int, regNamePre: String, triggers: Bool*)``                  create MASK/STATUS for level_int merge at addrOffset      
+   ``interrupt_W1SCmask_FactoryAt(addrOffset: BigInt, regNamePre: String, triggers: Bool*)``     creat RAW/FORCE/MASK(SET/CLR)/STATUS for pulse event at addrOffset
+   ``interruptLevel_W1SCmask_FactoryAt(addrOffset: BigInt, regNamePre: String, levels: Bool*)``  creat RAW/FORCE/MASK(SET/CLR)/STATUS for leveel event at addrOffset
+   ============================================================================================= ===================================================================
+
 ============================================================================================= ===================================================================
 BusInterface method                                                                           Description                                                        
 ============================================================================================= ===================================================================
-``InterruptFactory(regNamePre: String, triggers: Bool*)``                                     create RAW/FORCE/MASK/STATUS for pulse event      
-``InterruptFactoryNoForce(regNamePre: String, triggers: Bool*)``                              create RAW/MASK/STATUS for pulse event      
-``InterruptLevelFactory(regNamePre: String, triggers: Bool*)``                                create MASK/STATUS for level_int merge       
-``InterruptFactoryAt(addrOffset: Int, regNamePre: String, triggers: Bool*)``                  create RAW/FORCE/MASK/STATUS for pulse event at addrOffset 
-``InterruptFactoryNoForceAt(addrOffset: Int, regNamePre: String, triggers: Bool*)``           create RAW/MASK/STATUS for pulse event at addrOffset     
-``InterruptFactoryAt(addrOffset: Int, regNamePre: String, triggers: Bool*)``                  create MASK/STATUS for level_int merge at addrOffset      
-``interrupt_W1SCmask_FactoryAt(addrOffset: BigInt, regNamePre: String, triggers: Bool*)``     creat RAW/FORCE/MASK(SET/CLR)/STATUS for pulse event at addrOffset
-``interruptLevel_W1SCmask_FactoryAt(addrOffset: BigInt, regNamePre: String, levels: Bool*)``  creat RAW/FORCE/MASK(SET/CLR)/STATUS for leveel event at addrOffset
+``busif.newRFMS4/At()``                                  create RAW/FORCE/MASK/STATUS         for pulse event      
+``busif.newRFMMS5/At()``                                 create RAW/FORCE/MASKS/MASKC/STATUS  for pulse event      
+``busif.newRMS4/At()``                                   create RAW/MASK/STATUS               for pulse event      
+``busif.newMS2/At()``                                    create MASK/STATUS                   for level intr merge        
+``busif.newMMS3/At()``                                   create MASKS/MASKC/STATUS            for level intr merge        
+``busif.newOMS3/At()``                                   create ORIGN/MASK/STATUS             for level intr merge        
+``busif.newOMMS4/At()``                                  create ORIGN/MASKS/MASKC/STATUS      for level intr merge        
+``busif.newS1/At()``                                     create STATUS                        for level intr merge        
 ============================================================================================= ===================================================================
-                               
+                              
 Example
 -------
 
@@ -477,11 +665,12 @@ Example
       io.gpio_int := busif.interruptLevelFactory("GPIO",io.int_level0, io.int_level1, io.int_level2, io.sys_int)
 
       def genDoc() = {
-        busif.accept(CHeaderGenerator("intrreg","Intr"))
-        busif.accept(HtmlGenerator("intrreg", "Interupt Example"))
-        busif.accept(JsonGenerator("intrreg"))
-        busif.accept(RalfGenerator("intrreg"))
-        busif.accept(SystemRdlGenerator("intrreg", "Intr"))
+        busif.accept(DocHtml("intrreg", "Interupt Example"))
+        busif.accept(DocCHeader("intrreg","Intr"))
+        busif.accept(DocSVHeader("intrreg"))
+        busif.accept(DocJson("intrreg"))
+        busif.accept(DocRalf("intrreg"))
+        busif.accept(DocSystemRdl("intrreg", "Intr"))
         this
       }
 
